@@ -74,6 +74,7 @@ interface OrderDetails {
     amount: number
     status: string
     stripe_payment_intent_id?: string
+    sumup_checkout_id?: string
   }
 }
 
