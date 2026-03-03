@@ -255,6 +255,7 @@ export function mapAndFillFields(
     'fiche-identification': 'Fiche d\'identification d\'un véhicule',
     'enregistrement-cession': 'Enregistrement de cession',
     'w-garage': 'W Garage',
+    'demande-quitus-fiscal': 'Demande de quitus fiscal',
   }
   const demarcheLabel = demarcheLabels[formData.demarcheType] || formData.demarcheType
   

@@ -264,6 +264,27 @@ export default function CheckoutSignupPage() {
         console.log('Ajout mandat:', files.mandatFile.name, `(${mandatType})`)
         documentsToUpload.push({ file: files.mandatFile, documentType: mandatType })
       }
+
+      const quitusDocTypes: Record<string, string> = {
+        quitusJustificatifIdentiteFile: 'quitus_justificatif_identite',
+        quitusJustificatifDomicileFile: 'quitus_justificatif_domicile',
+        quitusCertificatImmatriculationEtrangerFile: 'quitus_certificat_immatriculation_etranger',
+        quitusJustificatifVenteFile: 'quitus_justificatif_vente',
+        quitusCertificatConformiteFile: 'quitus_certificat_conformite',
+        quitusControleTechniqueFile: 'quitus_controle_technique',
+        quitusUsageVehiculeFile: 'quitus_usage_vehicule',
+        quitusMandatRepresentationFile: 'quitus_mandat_representation',
+        quitusCopieIdentiteMandataireFile: 'quitus_copie_identite_mandataire',
+        quitusDemandeCertificatCerfa13750File: 'quitus_demande_cerfa_13750',
+      }
+      if (orderData.serviceType === 'demande-quitus-fiscal') {
+        Object.entries(quitusDocTypes).forEach(([key, docType]) => {
+          const file = (files as Record<string, File | undefined>)[key]
+          if (file) {
+            documentsToUpload.push({ file, documentType: docType })
+          }
+        })
+      }
       
       // Documents pour plaque et COC
       if (files.carteGriseFile) {

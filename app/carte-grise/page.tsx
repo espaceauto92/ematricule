@@ -154,7 +154,8 @@ export default function CarteGrisePage() {
         'changement-adresse': 'changement-adresse',
         'fiche-identification': 'fiche-identification',
         'declaration-achat': 'declaration-achat',
-        'w-garage': 'w-garage'
+        'w-garage': 'w-garage',
+        'demande-quitus-fiscal': 'demande-quitus-fiscal'
       }
       return typeMap[typeParam] || 'changement-titulaire'
     }
@@ -233,6 +234,17 @@ export default function CarteGrisePage() {
   const [cessionCarteIdentiteFile, setCessionCarteIdentiteFile] = useState<File | null>(null)
   const [cessionCertificatVenteFile, setCessionCertificatVenteFile] = useState<File | null>(null)
   const [cessionMandatFile, setCessionMandatFile] = useState<File | null>(null)
+  // Demande de quitus fiscal documents
+  const [quitusJustificatifIdentiteFile, setQuitusJustificatifIdentiteFile] = useState<File | null>(null)
+  const [quitusJustificatifDomicileFile, setQuitusJustificatifDomicileFile] = useState<File | null>(null)
+  const [quitusCertificatImmatriculationEtrangerFile, setQuitusCertificatImmatriculationEtrangerFile] = useState<File | null>(null)
+  const [quitusJustificatifVenteFile, setQuitusJustificatifVenteFile] = useState<File | null>(null)
+  const [quitusCertificatConformiteFile, setQuitusCertificatConformiteFile] = useState<File | null>(null)
+  const [quitusControleTechniqueFile, setQuitusControleTechniqueFile] = useState<File | null>(null)
+  const [quitusUsageVehiculeFile, setQuitusUsageVehiculeFile] = useState<File | null>(null)
+  const [quitusMandatRepresentationFile, setQuitusMandatRepresentationFile] = useState<File | null>(null)
+  const [quitusCopieIdentiteMandataireFile, setQuitusCopieIdentiteMandataireFile] = useState<File | null>(null)
+  const [quitusDemandeCertificatCerfa13750File, setQuitusDemandeCertificatCerfa13750File] = useState<File | null>(null)
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [mandatPreviewUrl, setMandatPreviewUrl] = useState<string | null>(null)
   const [isGeneratingMandat, setIsGeneratingMandat] = useState(false)
@@ -308,6 +320,14 @@ export default function CarteGrisePage() {
         alert('Veuillez d\'abord signer et valider le mandat avant de continuer.')
         setIsSubmitting(false)
         return
+      }
+
+      if (documentType === 'demande-quitus-fiscal') {
+        if (!quitusJustificatifIdentiteFile || !quitusJustificatifDomicileFile || !quitusCertificatImmatriculationEtrangerFile || !quitusJustificatifVenteFile || !quitusCertificatConformiteFile) {
+          alert('Veuillez fournir tous les documents obligatoires pour la demande de quitus fiscal.')
+          setIsSubmitting(false)
+          return
+        }
       }
       
       // Calculate price
@@ -453,6 +473,30 @@ export default function CarteGrisePage() {
           })
         )
       }
+
+      if (documentType === 'demande-quitus-fiscal') {
+        const quitusFiles: [File | null, string][] = [
+          [quitusJustificatifIdentiteFile, 'quitusJustificatifIdentiteFile'],
+          [quitusJustificatifDomicileFile, 'quitusJustificatifDomicileFile'],
+          [quitusCertificatImmatriculationEtrangerFile, 'quitusCertificatImmatriculationEtrangerFile'],
+          [quitusJustificatifVenteFile, 'quitusJustificatifVenteFile'],
+          [quitusCertificatConformiteFile, 'quitusCertificatConformiteFile'],
+          [quitusControleTechniqueFile, 'quitusControleTechniqueFile'],
+          [quitusUsageVehiculeFile, 'quitusUsageVehiculeFile'],
+          [quitusMandatRepresentationFile, 'quitusMandatRepresentationFile'],
+          [quitusCopieIdentiteMandataireFile, 'quitusCopieIdentiteMandataireFile'],
+          [quitusDemandeCertificatCerfa13750File, 'quitusDemandeCertificatCerfa13750File'],
+        ]
+        quitusFiles.forEach(([file, key]) => {
+          if (file) {
+            filePromises.push(
+              convertFileToBase64(file).then(base64 => {
+                (filesToStore as Record<string, { name: string; type: string; base64: string }>)[key] = { name: file.name, type: file.type, base64 }
+              })
+            )
+          }
+        })
+      }
       
       // Handle mandat files
       if (mandatPreviewUrlWithSignature && isSignatureValidated) {
@@ -554,6 +598,27 @@ export default function CarteGrisePage() {
               documentType: isSignatureValidated ? 'mandat_signe' : 'mandat' 
               })
           }
+          const quitusDocTypes: Record<string, string> = {
+            quitusJustificatifIdentiteFile: 'quitus_justificatif_identite',
+            quitusJustificatifDomicileFile: 'quitus_justificatif_domicile',
+            quitusCertificatImmatriculationEtrangerFile: 'quitus_certificat_immatriculation_etranger',
+            quitusJustificatifVenteFile: 'quitus_justificatif_vente',
+            quitusCertificatConformiteFile: 'quitus_certificat_conformite',
+            quitusControleTechniqueFile: 'quitus_controle_technique',
+            quitusUsageVehiculeFile: 'quitus_usage_vehicule',
+            quitusMandatRepresentationFile: 'quitus_mandat_representation',
+            quitusCopieIdentiteMandataireFile: 'quitus_copie_identite_mandataire',
+            quitusDemandeCertificatCerfa13750File: 'quitus_demande_cerfa_13750',
+          }
+          Object.entries(quitusDocTypes).forEach(([key, docType]) => {
+            const stored = (filesToStore as Record<string, { name: string; type: string; base64: string } | undefined>)[key]
+            if (stored) {
+              filesToUpload.push({
+                file: base64ToFile(stored.base64, stored.name, stored.type),
+                documentType: docType,
+              })
+            }
+          })
           
           // Create order
           const result = await createOrder(orderData)
@@ -968,7 +1033,7 @@ export default function CarteGrisePage() {
       }
 
       // Ne calculer que pour certaines démarches (pas pour "Sur devis")
-      if (documentType === 'declaration-achat' || documentType === 'w-garage') {
+      if (documentType === 'declaration-achat' || documentType === 'w-garage' || documentType === 'demande-quitus-fiscal') {
         if (isMounted) {
           setCalculatedPrice(null)
         }
@@ -1154,7 +1219,8 @@ export default function CarteGrisePage() {
         'changement-adresse': 'changement-adresse',
         'fiche-identification': 'fiche-identification',
         'declaration-achat': 'declaration-achat',
-        'w-garage': 'w-garage'
+        'w-garage': 'w-garage',
+        'demande-quitus-fiscal': 'demande-quitus-fiscal'
       }
       const mappedType = typeMap[typeParam]
       if (mappedType && mappedType !== documentType) {
@@ -1242,6 +1308,14 @@ export default function CarteGrisePage() {
       price: '60€',
       icon: Building2,
       iconImage: '/g8.png'
+    },
+    {
+      value: 'demande-quitus-fiscal',
+      label: 'Demande de quitus fiscal',
+      description: 'L\'immatriculation d\'un véhicule importé implique la présentation d\'un quitus fiscal.',
+      price: '50€',
+      icon: FileCheck,
+      iconImage: '/g4.png'
     },
   ]
 
@@ -2570,8 +2644,114 @@ export default function CarteGrisePage() {
                     </>
                   )}
 
+                  {/* Documents for Demande de quitus fiscal - Mobile */}
+                  {documentType === 'demande-quitus-fiscal' && (
+                    <>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Justificatif d'identité en cours de validité *</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusJustificatifIdentiteFile)} className="hidden" accept="image/*,.pdf" required />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusJustificatifIdentiteFile ? quitusJustificatifIdentiteFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Justificatif de domicile de moins de 6 mois *</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusJustificatifDomicileFile)} className="hidden" accept="image/*,.pdf" required />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusJustificatifDomicileFile ? quitusJustificatifDomicileFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Certificat d'immatriculation étranger *</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusCertificatImmatriculationEtrangerFile)} className="hidden" accept="image/*,.pdf" required />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusCertificatImmatriculationEtrangerFile ? quitusCertificatImmatriculationEtrangerFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Justificatif de vente (facture ou certificat de cession) *</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusJustificatifVenteFile)} className="hidden" accept="image/*,.pdf" required />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusJustificatifVenteFile ? quitusJustificatifVenteFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Certificat de conformité délivré par le constructeur ou équivalent *</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusCertificatConformiteFile)} className="hidden" accept="image/*,.pdf" required />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusCertificatConformiteFile ? quitusCertificatConformiteFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Contrôle technique &lt; 6 mois (lorsqu'applicable)</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusControleTechniqueFile)} className="hidden" accept="image/*,.pdf" />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusControleTechniqueFile ? quitusControleTechniqueFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Justificatif de l'usage du véhicule (lorsqu'applicable)</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusUsageVehiculeFile)} className="hidden" accept="image/*,.pdf" />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusUsageVehiculeFile ? quitusUsageVehiculeFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Mandat de représentation (si demandeur ≠ acheteur)</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusMandatRepresentationFile)} className="hidden" accept="image/*,.pdf" />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusMandatRepresentationFile ? quitusMandatRepresentationFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Copie pièce d'identité du mandant (si demandeur ≠ acheteur)</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusCopieIdentiteMandataireFile)} className="hidden" accept="image/*,.pdf" />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusCopieIdentiteMandataireFile ? quitusCopieIdentiteMandataireFile.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Demande de certificat d'immatriculation signée (Cerfa 13750) si applicable</label>
+                        <div className="flex items-center space-x-3">
+                          <label className="cursor-pointer">
+                            <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2"><Upload className="w-4 h-4" /><span>Choisir un fichier</span></span>
+                            <input type="file" onChange={handleFileChange(setQuitusDemandeCertificatCerfa13750File)} className="hidden" accept="image/*,.pdf" />
+                          </label>
+                          <span className="text-sm text-gray-500">{quitusDemandeCertificatCerfa13750File ? quitusDemandeCertificatCerfa13750File.name : 'Aucun fichier choisi'}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   {/* Documents for all other démarches - Mobile: show ID, proof of address, optional carte grise */}
-                  {documentType !== 'changement-titulaire' && documentType !== 'changement-adresse' && documentType !== 'duplicata' && documentType !== 'declaration-achat' && documentType !== 'fiche-identification' && documentType !== 'immatriculation-provisoire-ww' && documentType !== 'carte-grise-vehicule-etranger-ue' && documentType !== 'w-garage' && documentType !== 'enregistrement-cession' && (
+                  {documentType !== 'changement-titulaire' && documentType !== 'changement-adresse' && documentType !== 'duplicata' && documentType !== 'declaration-achat' && documentType !== 'fiche-identification' && documentType !== 'immatriculation-provisoire-ww' && documentType !== 'carte-grise-vehicule-etranger-ue' && documentType !== 'w-garage' && documentType !== 'enregistrement-cession' && documentType !== 'demande-quitus-fiscal' && (
                     <>
                       <div className="mb-4">
                         <label className="flex items-center text-sm font-medium text-gray-900 mb-2">Pièce d'identité *</label>
@@ -5269,8 +5449,194 @@ export default function CarteGrisePage() {
                       </>
                     )}
 
+                    {/* Documents for Demande de quitus fiscal */}
+                    {documentType === 'demande-quitus-fiscal' && (
+                      <>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Justificatif d'identité en cours de validité *
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusJustificatifIdentiteFile)} className="hidden" accept="image/*,.pdf" required />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusJustificatifIdentiteFile ? quitusJustificatifIdentiteFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Justificatif de domicile de moins de 6 mois *
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusJustificatifDomicileFile)} className="hidden" accept="image/*,.pdf" required />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusJustificatifDomicileFile ? quitusJustificatifDomicileFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Certificat d'immatriculation étranger *
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusCertificatImmatriculationEtrangerFile)} className="hidden" accept="image/*,.pdf" required />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusCertificatImmatriculationEtrangerFile ? quitusCertificatImmatriculationEtrangerFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Justificatif de vente (facture ou certificat de cession) *
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusJustificatifVenteFile)} className="hidden" accept="image/*,.pdf" required />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusJustificatifVenteFile ? quitusJustificatifVenteFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Certificat de conformité délivré par le constructeur ou équivalent *
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusCertificatConformiteFile)} className="hidden" accept="image/*,.pdf" required />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusCertificatConformiteFile ? quitusCertificatConformiteFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Justificatif de contrôle technique français ou étranger datant de moins de 6 mois (lorsqu'applicable)
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusControleTechniqueFile)} className="hidden" accept="image/*,.pdf" />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusControleTechniqueFile ? quitusControleTechniqueFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Justificatif de l'usage du véhicule (lorsqu'applicable)
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusUsageVehiculeFile)} className="hidden" accept="image/*,.pdf" />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusUsageVehiculeFile ? quitusUsageVehiculeFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Si le demandeur n'est pas l'acheteur du véhicule : mandat de représentation
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusMandatRepresentationFile)} className="hidden" accept="image/*,.pdf" />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusMandatRepresentationFile ? quitusMandatRepresentationFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            Si le demandeur n'est pas l'acheteur : copie de la pièce d'identité du mandant
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusCopieIdentiteMandataireFile)} className="hidden" accept="image/*,.pdf" />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusCopieIdentiteMandataireFile ? quitusCopieIdentiteMandataireFile.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="flex items-center text-sm font-medium text-gray-900 mb-2">
+                            En cas de démarche incluant l'immatriculation : demande de certificat d'immatriculation signée (Cerfa 13750)
+                            <div className="w-4 h-4 ml-2 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                              <Info className="w-3 h-3 text-gray-600" />
+                            </div>
+                          </label>
+                          <div className="flex items-center space-x-3">
+                            <label className="cursor-pointer">
+                              <span className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm rounded hover:bg-gray-800 transition-colors flex items-center space-x-2">
+                                <Upload className="w-4 h-4" />
+                                <span>Choisir un fichier</span>
+                              </span>
+                              <input type="file" onChange={handleFileChange(setQuitusDemandeCertificatCerfa13750File)} className="hidden" accept="image/*,.pdf" />
+                            </label>
+                            <span className="text-sm text-gray-500">{quitusDemandeCertificatCerfa13750File ? quitusDemandeCertificatCerfa13750File.name : 'Aucun fichier choisi'}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
                     {/* Documents for other document types */}
-                    {documentType !== 'changement-titulaire' && documentType !== 'changement-adresse' && documentType !== 'duplicata' && documentType !== 'declaration-achat' && documentType !== 'fiche-identification' && documentType !== 'immatriculation-provisoire-ww' && documentType !== 'carte-grise-vehicule-etranger-ue' && documentType !== 'w-garage' && documentType !== 'enregistrement-cession' && (
+                    {documentType !== 'changement-titulaire' && documentType !== 'changement-adresse' && documentType !== 'duplicata' && documentType !== 'declaration-achat' && documentType !== 'fiche-identification' && documentType !== 'immatriculation-provisoire-ww' && documentType !== 'carte-grise-vehicule-etranger-ue' && documentType !== 'w-garage' && documentType !== 'enregistrement-cession' && documentType !== 'demande-quitus-fiscal' && (
                       <>
                     {/* ID Document */}
                     <div className="mb-4">
