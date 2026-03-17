@@ -635,6 +635,21 @@ export default function CarteGrisePage() {
       
       console.log('Fichiers stockés dans sessionStorage:', Object.keys(filesToStore))
       console.log('Nombre de fichiers:', Object.keys(filesToStore).length)
+
+      // sessionStorage limit is ~5–10 MB; base64 adds ~33% overhead
+      const MAX_SESSION_STORAGE_BYTES = 4 * 1024 * 1024 // 4 MB safe limit
+      const payloadSize = Object.values(filesToStore).reduce(
+        (sum, f) => sum + Math.ceil((f.base64.length * 3) / 4),
+        0
+      )
+      if (payloadSize > MAX_SESSION_STORAGE_BYTES) {
+        setSubmitError(
+          `Les documents sont trop volumineux (${(payloadSize / 1024 / 1024).toFixed(1)} Mo). ` +
+          'Réduisez la taille des fichiers (compression PDF, images plus légères) ou connectez-vous pour continuer.'
+        )
+        setIsSubmitting(false)
+        return
+      }
       
       // Check if user is already logged in
       if (user && !sessionLoading) {
@@ -798,7 +813,18 @@ export default function CarteGrisePage() {
       }
       
       // User is not logged in - store data and redirect to checkout-signup
-      sessionStorage.setItem('pendingOrderFiles', JSON.stringify(filesToStore))
+      try {
+        sessionStorage.setItem('pendingOrderFiles', JSON.stringify(filesToStore))
+      } catch (storageError: any) {
+        const isQuota = storageError?.name === 'QuotaExceededError' || /quota|exceeded/i.test(storageError?.message || '')
+        setSubmitError(
+          isQuota
+            ? 'Les documents sont trop volumineux pour passer au paiement. Réduisez la taille des fichiers (compression PDF, images plus légères) ou connectez-vous pour continuer.'
+            : (storageError?.message || 'Impossible d’enregistrer les documents. Réessayez.')
+        )
+        setIsSubmitting(false)
+        return
+      }
       window.location.href = '/checkout-signup'
 
     } catch (error: any) {
