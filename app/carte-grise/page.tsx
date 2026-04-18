@@ -8,6 +8,7 @@ import { FileText, Info, Shield, Clock, CheckCircle, Star, CreditCard, Upload, U
 import { CAR_BRANDS } from '@/lib/data/carBrands'
 import { useSupabaseSession } from '@/hooks/useSupabaseSession'
 import { createOrder, uploadDocuments, createCheckoutAndRedirect } from '@/lib/services/orderService'
+import { saveFilesToIndexedDB } from '@/lib/utils/storage'
 // Charger PDFViewer uniquement côté client (pas de SSR)
 // Utiliser useCanvas={false} pour désactiver le rendu canvas (plus rapide)
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
@@ -411,386 +412,140 @@ export default function CarteGrisePage() {
         }
       }
 
-      // Store all form data temporarily in localStorage for checkout-signup page
-      // Convert files to base64 or store blob URLs for later upload
-      const formDataToStore = {
-        orderData,
-        finalPrice,
-        // Store file references (we'll convert them to files later)
-        documents: {
-          idFile: idFile ? { name: idFile.name, type: idFile.type, size: idFile.size } : null,
-          proofAddressFile: proofAddressFile ? { name: proofAddressFile.name, type: proofAddressFile.type, size: proofAddressFile.size } : null,
-          currentCardFile: currentCardFile ? { name: currentCardFile.name, type: currentCardFile.type, size: currentCardFile.size } : null,
-          certificatCessionFile: certificatCessionFile ? { name: certificatCessionFile.name, type: certificatCessionFile.type, size: certificatCessionFile.size } : null,
-          permisConduireFile: permisConduireFile ? { name: permisConduireFile.name, type: permisConduireFile.type, size: permisConduireFile.size } : null,
-          controleTechniqueFile: controleTechniqueFile ? { name: controleTechniqueFile.name, type: controleTechniqueFile.type, size: controleTechniqueFile.size } : null,
-          assuranceFile: assuranceFile ? { name: assuranceFile.name, type: assuranceFile.type, size: assuranceFile.size } : null,
-        },
-        mandatPreviewUrl,
-        mandatPreviewUrlWithSignature,
-        isSignatureValidated,
-        // Store file objects in a separate key (we'll handle them in checkout-signup)
-        files: {
-          idFile,
-          proofAddressFile,
-          currentCardFile,
-          certificatCessionFile,
-          permisConduireFile,
-          controleTechniqueFile,
-          assuranceFile,
+      // Collect ALL files for either immediate upload or IndexedDB storage
+      const allFiles: Record<string, File> = {}
+      if (idFile) allFiles.idFile = idFile
+      if (proofAddressFile) allFiles.proofAddressFile = proofAddressFile
+      if (currentCardFile) allFiles.currentCardFile = currentCardFile
+      if (certificatCessionFile) allFiles.certificatCessionFile = certificatCessionFile
+      if (permisConduireFile) allFiles.permisConduireFile = permisConduireFile
+      if (controleTechniqueFile) allFiles.controleTechniqueFile = controleTechniqueFile
+      if (assuranceFile) allFiles.assuranceFile = assuranceFile
+      
+      // Procedure-specific files
+      if (documentType === 'changement-titulaire') {
+        if (clientType === 'hosted') {
+          if (hostIdFile) allFiles.hostIdFile = hostIdFile
+          if (hostProofAddressFile) allFiles.hostProofAddressFile = hostProofAddressFile
+          if (attestationHebergementFile) allFiles.attestationHebergementFile = attestationHebergementFile
+        } else if (clientType === 'company') {
+          if (kbisFile) allFiles.kbisFile = kbisFile
+          if (gerantIdFile) allFiles.gerantIdFile = gerantIdFile
         }
       }
+      // ... add other procedure files mapping if needed, or just collect all existing ones
+      if (cerfa13750File) allFiles.cerfa13750File = cerfa13750File
+      if (cerfa13753File) allFiles.cerfa13753File = cerfa13753File
+      if (carteGriseVendeurFile) allFiles.carteGriseVendeurFile = carteGriseVendeurFile
+      if (demandeCertificatMandatFile) allFiles.demandeCertificatMandatFile = demandeCertificatMandatFile
+      if (certificatCessionCerfa15776File) allFiles.certificatCessionCerfa15776File = certificatCessionCerfa15776File
+      if (recepisseDeclarationAchatFile) allFiles.recepisseDeclarationAchatFile = recepisseDeclarationAchatFile
+      if (certificatDeclarationAchatCerfa13751File) allFiles.certificatDeclarationAchatCerfa13751File = certificatDeclarationAchatCerfa13751File
+      if (justificatifIdentiteFile) allFiles.justificatifIdentiteFile = justificatifIdentiteFile
+      if (extraitKbisFile) allFiles.extraitKbisFile = extraitKbisFile
+      // Fiche identification
+      if (ficheJustificatifIdentiteFile) allFiles.ficheJustificatifIdentiteFile = ficheJustificatifIdentiteFile
+      if (fichePermisConduireFile) allFiles.fichePermisConduireFile = fichePermisConduireFile
+      if (ficheCopieCarteGriseFile) allFiles.ficheCopieCarteGriseFile = ficheCopieCarteGriseFile
+      // WW 
+      if (wwCarteGriseEtrangereFile) allFiles.wwCarteGriseEtrangereFile = wwCarteGriseEtrangereFile
+      if (wwCertificatConformiteFile) allFiles.wwCertificatConformiteFile = wwCertificatConformiteFile
+      if (wwJustificatifProprieteFile) allFiles.wwJustificatifProprieteFile = wwJustificatifProprieteFile
+      if (wwQuitusFiscalFile) allFiles.wwQuitusFiscalFile = wwQuitusFiscalFile
+      if (wwPermisConduireFile) allFiles.wwPermisConduireFile = wwPermisConduireFile
+      if (wwJustificatifDomicileFile) allFiles.wwJustificatifDomicileFile = wwJustificatifDomicileFile
+      if (wwJustificatifIdentiteFile) allFiles.wwJustificatifIdentiteFile = wwJustificatifIdentiteFile
+      if (wwControleTechniqueFile) allFiles.wwControleTechniqueFile = wwControleTechniqueFile
       
-      // Store in localStorage (files will be stored separately)
-      localStorage.setItem('pendingOrderData', JSON.stringify({
-        ...formDataToStore,
-        files: null // Don't store files in JSON
-      }))
-
-      // Convert files to base64 and store in sessionStorage
-      const filesToStore: { [key: string]: { name: string; type: string; base64: string } } = {}
-      
-      const convertFileToBase64 = (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.readAsDataURL(file)
-          reader.onload = () => {
-            const base64 = (reader.result as string).split(',')[1] // Remove data:type;base64, prefix
-            resolve(base64)
-          }
-          reader.onerror = reject
-        })
-      }
-      
-      // Convert all files to base64
-      const filePromises: Promise<void>[] = []
-      
-      if (idFile) {
-        filePromises.push(
-          convertFileToBase64(idFile).then(base64 => {
-            filesToStore.idFile = { name: idFile.name, type: idFile.type, base64 }
-          })
-        )
-      }
-      if (proofAddressFile) {
-        filePromises.push(
-          convertFileToBase64(proofAddressFile).then(base64 => {
-            filesToStore.proofAddressFile = { name: proofAddressFile.name, type: proofAddressFile.type, base64 }
-          })
-        )
-      }
-      if (currentCardFile) {
-        filePromises.push(
-          convertFileToBase64(currentCardFile).then(base64 => {
-            filesToStore.currentCardFile = { name: currentCardFile.name, type: currentCardFile.type, base64 }
-          })
-        )
-      }
-      if (certificatCessionFile) {
-        filePromises.push(
-          convertFileToBase64(certificatCessionFile).then(base64 => {
-            filesToStore.certificatCessionFile = { name: certificatCessionFile.name, type: certificatCessionFile.type, base64 }
-          })
-        )
-      }
-      if (permisConduireFile) {
-        filePromises.push(
-          convertFileToBase64(permisConduireFile).then(base64 => {
-            filesToStore.permisConduireFile = { name: permisConduireFile.name, type: permisConduireFile.type, base64 }
-          })
-        )
-      }
-      if (controleTechniqueFile) {
-        filePromises.push(
-          convertFileToBase64(controleTechniqueFile).then(base64 => {
-            filesToStore.controleTechniqueFile = { name: controleTechniqueFile.name, type: controleTechniqueFile.type, base64 }
-          })
-        )
-      }
-      if (assuranceFile) {
-        filePromises.push(
-          convertFileToBase64(assuranceFile).then(base64 => {
-            filesToStore.assuranceFile = { name: assuranceFile.name, type: assuranceFile.type, base64 }
-          })
-        )
-      }
-
-      // Procedure-specific files: convert to base64 and store (so they are uploaded for admin)
-      const procedureFileLists: [File | null, string][] = []
-      if (documentType === 'changement-titulaire' && clientType === 'hosted') {
-        procedureFileLists.push([hostIdFile, 'hostIdFile'], [hostProofAddressFile, 'hostProofAddressFile'], [attestationHebergementFile, 'attestationHebergementFile'])
-      }
-      if (documentType === 'changement-titulaire' && clientType === 'company') {
-        procedureFileLists.push([kbisFile, 'kbisFile'], [gerantIdFile, 'gerantIdFile'])
-      }
-      if (documentType === 'duplicata') {
-        procedureFileLists.push([cerfa13750File, 'cerfa13750File'], [cerfa13753File, 'cerfa13753File'])
-      }
-      if (documentType === 'declaration-achat') {
-        procedureFileLists.push(
-          [carteGriseVendeurFile, 'carteGriseVendeurFile'],
-          [demandeCertificatMandatFile, 'demandeCertificatMandatFile'],
-          [certificatCessionCerfa15776File, 'certificatCessionCerfa15776File'],
-          [recepisseDeclarationAchatFile, 'recepisseDeclarationAchatFile'],
-          [certificatDeclarationAchatCerfa13751File, 'certificatDeclarationAchatCerfa13751File'],
-          [justificatifIdentiteFile, 'justificatifIdentiteFile'],
-          [extraitKbisFile, 'extraitKbisFile']
-        )
-      }
-      if (documentType === 'fiche-identification') {
-        procedureFileLists.push([ficheJustificatifIdentiteFile, 'ficheJustificatifIdentiteFile'], [fichePermisConduireFile, 'fichePermisConduireFile'], [ficheCopieCarteGriseFile, 'ficheCopieCarteGriseFile'])
-      }
-      if (documentType === 'immatriculation-provisoire-ww') {
-        procedureFileLists.push(
-          [wwCarteGriseEtrangereFile, 'wwCarteGriseEtrangereFile'],
-          [wwCertificatConformiteFile, 'wwCertificatConformiteFile'],
-          [wwJustificatifProprieteFile, 'wwJustificatifProprieteFile'],
-          [wwQuitusFiscalFile, 'wwQuitusFiscalFile'],
-          [wwPermisConduireFile, 'wwPermisConduireFile'],
-          [wwJustificatifDomicileFile, 'wwJustificatifDomicileFile'],
-          [wwJustificatifIdentiteFile, 'wwJustificatifIdentiteFile'],
-          [wwControleTechniqueFile, 'wwControleTechniqueFile']
-        )
-      }
-      if (documentType === 'carte-grise-vehicule-etranger-ue') {
-        procedureFileLists.push(
-          [ueCarteGriseEtrangereFile, 'ueCarteGriseEtrangereFile'],
-          [ueCertificatConformiteFile, 'ueCertificatConformiteFile'],
-          [ueJustificatifProprieteFile, 'ueJustificatifProprieteFile'],
-          [ueQuitusFiscalFile, 'ueQuitusFiscalFile'],
-          [uePermisConduireFile, 'uePermisConduireFile'],
-          [ueJustificatifDomicileFile, 'ueJustificatifDomicileFile'],
-          [ueJustificatifIdentiteFile, 'ueJustificatifIdentiteFile'],
-          [ueControleTechniqueFile, 'ueControleTechniqueFile']
-        )
-      }
-      if (documentType === 'w-garage') {
-        procedureFileLists.push(
-          [wGarageKbisFile, 'wGarageKbisFile'],
-          [wGarageSirenFile, 'wGarageSirenFile'],
-          [wGarageJustificatifDomiciliationFile, 'wGarageJustificatifDomiciliationFile'],
-          [wGarageCniGerantFile, 'wGarageCniGerantFile'],
-          [wGarageAssuranceFile, 'wGarageAssuranceFile'],
-          [wGaragePreuveActiviteFile, 'wGaragePreuveActiviteFile']
-        )
-      }
-      if (documentType === 'enregistrement-cession') {
-        procedureFileLists.push([cessionCarteGriseBarreeFile, 'cessionCarteGriseBarreeFile'], [cessionCarteIdentiteFile, 'cessionCarteIdentiteFile'], [cessionCertificatVenteFile, 'cessionCertificatVenteFile'])
-      }
-      if (documentType === 'demande-quitus-fiscal') {
-        procedureFileLists.push(
-          [quitusJustificatifIdentiteFile, 'quitusJustificatifIdentiteFile'],
-          [quitusJustificatifDomicileFile, 'quitusJustificatifDomicileFile'],
-          [quitusCertificatImmatriculationEtrangerFile, 'quitusCertificatImmatriculationEtrangerFile'],
-          [quitusJustificatifVenteFile, 'quitusJustificatifVenteFile'],
-          [quitusCertificatConformiteFile, 'quitusCertificatConformiteFile'],
-          [quitusControleTechniqueFile, 'quitusControleTechniqueFile'],
-          [quitusUsageVehiculeFile, 'quitusUsageVehiculeFile'],
-          [quitusMandatRepresentationFile, 'quitusMandatRepresentationFile'],
-          [quitusCopieIdentiteMandataireFile, 'quitusCopieIdentiteMandataireFile'],
-          [quitusDemandeCertificatCerfa13750File, 'quitusDemandeCertificatCerfa13750File']
-        )
-      }
-      procedureFileLists.forEach(([file, key]) => {
-        if (file) {
-          filePromises.push(
-            convertFileToBase64(file).then(base64 => {
-              (filesToStore as Record<string, { name: string; type: string; base64: string }>)[key] = { name: file.name, type: file.type, base64 }
-            })
-          )
-        }
-      })
-
-      // Handle mandat files
+      // Mandat
+      let finalMandatFile: File | null = null
       if (mandatPreviewUrlWithSignature && isSignatureValidated) {
         try {
           const response = await fetch(mandatPreviewUrlWithSignature)
           const blob = await response.blob()
-          const mandatFile = new File([blob], `mandat_${documentType}_${Date.now()}.pdf`, { type: 'application/pdf' })
-          filePromises.push(
-            convertFileToBase64(mandatFile).then(base64 => {
-              filesToStore.mandatFile = { name: mandatFile.name, type: mandatFile.type, base64 }
-            })
-          )
-        } catch (error) {
-          console.error('Erreur conversion mandat:', error)
-        }
-      } else if (mandatPreviewUrl) {
-        try {
-          const response = await fetch(mandatPreviewUrl)
-          const blob = await response.blob()
-          const mandatFile = new File([blob], `mandat_${documentType}_${Date.now()}.pdf`, { type: 'application/pdf' })
-          filePromises.push(
-            convertFileToBase64(mandatFile).then(base64 => {
-              filesToStore.mandatFile = { name: mandatFile.name, type: mandatFile.type, base64 }
-            })
-          )
-        } catch (error) {
-          console.error('Erreur conversion mandat:', error)
-        }
+          finalMandatFile = new File([blob], `mandat_${documentType}.pdf`, { type: 'application/pdf' })
+          allFiles.mandatFile = finalMandatFile
+        } catch (e) { console.error('Mandat fetch error', e) }
       }
 
-      // Wait for all files to be converted
-      await Promise.all(filePromises)
-      
-      console.log('Fichiers stockés dans sessionStorage:', Object.keys(filesToStore))
-      console.log('Nombre de fichiers:', Object.keys(filesToStore).length)
+      // CASE 1: USER IS LOGGED IN
+      if (user && !sessionLoading) {
+        console.log('User logged in, uploading directly...')
+        
+        // Create order
+        const result = await createOrder(orderData)
+        if (!result.success || !result.order) {
+          throw new Error(result.error || 'Erreur lors de la création de la commande')
+        }
 
-      // sessionStorage limit is ~5–10 MB; base64 adds ~33% overhead
-      const MAX_SESSION_STORAGE_BYTES = 4 * 1024 * 1024 // 4 MB safe limit
-      const payloadSize = Object.values(filesToStore).reduce(
-        (sum, f) => sum + Math.ceil((f.base64.length * 3) / 4),
-        0
-      )
-      if (payloadSize > MAX_SESSION_STORAGE_BYTES) {
-        setSubmitError(
-          `Les documents sont trop volumineux (${(payloadSize / 1024 / 1024).toFixed(1)} Mo). ` +
-          'Réduisez la taille des fichiers (compression PDF, images plus légères) ou connectez-vous pour continuer.'
-        )
-        setIsSubmitting(false)
+        // Prepare files for upload service
+        const filesToUpload: Array<{ file: File; documentType: string }> = []
+        
+        // Helper to map UI keys to document types
+        const keyToDocType: Record<string, string> = {
+          idFile: 'carte_identite',
+          proofAddressFile: 'justificatif_domicile',
+          currentCardFile: 'carte_grise_actuelle',
+          certificatCessionFile: 'certificat_cession',
+          permisConduireFile: 'permis_conduire',
+          controleTechniqueFile: 'controle_technique',
+          assuranceFile: 'assurance',
+          mandatFile: isSignatureValidated ? 'mandat_signe' : 'mandat',
+          hostIdFile: 'host_id',
+          hostProofAddressFile: 'host_justificatif_domicile',
+          attestationHebergementFile: 'attestation_hebergement',
+          kbisFile: 'kbis',
+          gerantIdFile: 'gerant_id',
+          cerfa13750File: 'cerfa_13750',
+          cerfa13753File: 'cerfa_13753',
+          carteGriseVendeurFile: 'carte_grise_vendeur',
+          demandeCertificatMandatFile: 'demande_certificat_mandat',
+          certificatCessionCerfa15776File: 'certificat_cession_15776',
+          recepisseDeclarationAchatFile: 'recepisse_declaration_achat',
+          certificatDeclarationAchatCerfa13751File: 'certificat_declaration_achat_13751',
+          justificatifIdentiteFile: 'justificatif_identite',
+          extraitKbisFile: 'extrait_kbis',
+          ficheJustificatifIdentiteFile: 'fiche_justificatif_identite',
+          fichePermisConduireFile: 'fiche_permis_conduire',
+          ficheCopieCarteGriseFile: 'fiche_copie_carte_grise',
+          wwCarteGriseEtrangereFile: 'ww_carte_grise_etrangere',
+          wwCertificatConformiteFile: 'ww_certificat_conformite',
+          wwJustificatifProprieteFile: 'ww_justificatif_propriete',
+          wwQuitusFiscalFile: 'ww_quitus_fiscal',
+          wwPermisConduireFile: 'ww_permis_conduire',
+          wwJustificatifDomicileFile: 'ww_justificatif_domicile',
+          wwJustificatifIdentiteFile: 'ww_justificatif_identite',
+          wwControleTechniqueFile: 'ww_controle_technique',
+        }
+
+        for (const [key, file] of Object.entries(allFiles)) {
+          if (file) {
+            filesToUpload.push({ file, documentType: keyToDocType[key] || key })
+          }
+        }
+
+        if (filesToUpload.length > 0) {
+          await uploadDocuments(filesToUpload, result.order.id)
+        }
+
+        localStorage.setItem('currentOrderId', result.order.id)
+        localStorage.setItem('currentOrderRef', result.order.reference)
+        localStorage.setItem('currentOrderPrice', String(orderData.price))
+        
+        await createCheckoutAndRedirect(result.order.id, orderData.price)
         return
       }
+
+      // CASE 2: GUEST USER
+      console.log('Guest user, storing in IndexedDB...')
       
-      // Check if user is already logged in
-      if (user && !sessionLoading) {
-        // User is logged in - create order directly and redirect to payment
-        try {
-          // Convert base64 files back to File objects for upload
-          const filesToUpload: Array<{ file: File; documentType: string }> = []
-          
-          const base64ToFile = (base64: string, filename: string, mimeType: string): File => {
-            const byteCharacters = atob(base64)
-            const byteNumbers = new Array(byteCharacters.length)
-            for (let i = 0; i < byteCharacters.length; i++) {
-              byteNumbers[i] = byteCharacters.charCodeAt(i)
-            }
-            const byteArray = new Uint8Array(byteNumbers)
-            return new File([byteArray], filename, { type: mimeType })
-          }
-          
-          if (filesToStore.idFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.idFile.base64, filesToStore.idFile.name, filesToStore.idFile.type), 
-              documentType: 'carte_identite' 
-            })
-          }
-          if (filesToStore.proofAddressFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.proofAddressFile.base64, filesToStore.proofAddressFile.name, filesToStore.proofAddressFile.type), 
-              documentType: 'justificatif_domicile' 
-            })
-          }
-          if (filesToStore.currentCardFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.currentCardFile.base64, filesToStore.currentCardFile.name, filesToStore.currentCardFile.type), 
-              documentType: 'carte_grise_actuelle' 
-            })
-        }
-          if (filesToStore.certificatCessionFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.certificatCessionFile.base64, filesToStore.certificatCessionFile.name, filesToStore.certificatCessionFile.type), 
-              documentType: 'certificat_cession' 
-            })
-          }
-          if (filesToStore.permisConduireFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.permisConduireFile.base64, filesToStore.permisConduireFile.name, filesToStore.permisConduireFile.type), 
-              documentType: 'permis_conduire' 
-            })
-          }
-          if (filesToStore.controleTechniqueFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.controleTechniqueFile.base64, filesToStore.controleTechniqueFile.name, filesToStore.controleTechniqueFile.type), 
-              documentType: 'controle_technique' 
-            })
-          }
-          if (filesToStore.assuranceFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.assuranceFile.base64, filesToStore.assuranceFile.name, filesToStore.assuranceFile.type), 
-              documentType: 'assurance' 
-            })
-          }
-          if (filesToStore.mandatFile) {
-            filesToUpload.push({ 
-              file: base64ToFile(filesToStore.mandatFile.base64, filesToStore.mandatFile.name, filesToStore.mandatFile.type), 
-              documentType: isSignatureValidated ? 'mandat_signe' : 'mandat' 
-              })
-          }
-          const procedureDocTypeMap: Record<string, string> = {
-            hostIdFile: 'host_id',
-            hostProofAddressFile: 'host_justificatif_domicile',
-            attestationHebergementFile: 'attestation_hebergement',
-            kbisFile: 'kbis',
-            gerantIdFile: 'gerant_id',
-            cerfa13750File: 'cerfa_13750',
-            cerfa13753File: 'cerfa_13753',
-            carteGriseVendeurFile: 'carte_grise_vendeur',
-            demandeCertificatMandatFile: 'demande_certificat_mandat',
-            certificatCessionCerfa15776File: 'certificat_cession_15776',
-            recepisseDeclarationAchatFile: 'recepisse_declaration_achat',
-            certificatDeclarationAchatCerfa13751File: 'certificat_declaration_achat_13751',
-            justificatifIdentiteFile: 'justificatif_identite',
-            extraitKbisFile: 'extrait_kbis',
-            ficheJustificatifIdentiteFile: 'fiche_justificatif_identite',
-            fichePermisConduireFile: 'fiche_permis_conduire',
-            ficheCopieCarteGriseFile: 'fiche_copie_carte_grise',
-            wwCarteGriseEtrangereFile: 'ww_carte_grise_etrangere',
-            wwCertificatConformiteFile: 'ww_certificat_conformite',
-            wwJustificatifProprieteFile: 'ww_justificatif_propriete',
-            wwQuitusFiscalFile: 'ww_quitus_fiscal',
-            wwPermisConduireFile: 'ww_permis_conduire',
-            wwJustificatifDomicileFile: 'ww_justificatif_domicile',
-            wwJustificatifIdentiteFile: 'ww_justificatif_identite',
-            wwControleTechniqueFile: 'ww_controle_technique',
-            ueCarteGriseEtrangereFile: 'ue_carte_grise_etrangere',
-            ueCertificatConformiteFile: 'ue_certificat_conformite',
-            ueJustificatifProprieteFile: 'ue_justificatif_propriete',
-            ueQuitusFiscalFile: 'ue_quitus_fiscal',
-            uePermisConduireFile: 'ue_permis_conduire',
-            ueJustificatifDomicileFile: 'ue_justificatif_domicile',
-            ueJustificatifIdentiteFile: 'ue_justificatif_identite',
-            ueControleTechniqueFile: 'ue_controle_technique',
-            wGarageKbisFile: 'w_garage_kbis',
-            wGarageSirenFile: 'w_garage_siren',
-            wGarageJustificatifDomiciliationFile: 'w_garage_justificatif_domiciliation',
-            wGarageCniGerantFile: 'w_garage_cni_gerant',
-            wGarageAssuranceFile: 'w_garage_assurance',
-            wGaragePreuveActiviteFile: 'w_garage_preuve_activite',
-            cessionCarteGriseBarreeFile: 'cession_carte_grise_barree',
-            cessionCarteIdentiteFile: 'cession_carte_identite',
-            cessionCertificatVenteFile: 'cession_certificat_vente',
-            quitusJustificatifIdentiteFile: 'quitus_justificatif_identite',
-            quitusJustificatifDomicileFile: 'quitus_justificatif_domicile',
-            quitusCertificatImmatriculationEtrangerFile: 'quitus_certificat_immatriculation_etranger',
-            quitusJustificatifVenteFile: 'quitus_justificatif_vente',
-            quitusCertificatConformiteFile: 'quitus_certificat_conformite',
-            quitusControleTechniqueFile: 'quitus_controle_technique',
-            quitusUsageVehiculeFile: 'quitus_usage_vehicule',
-            quitusMandatRepresentationFile: 'quitus_mandat_representation',
-            quitusCopieIdentiteMandataireFile: 'quitus_copie_identite_mandataire',
-            quitusDemandeCertificatCerfa13750File: 'quitus_demande_cerfa_13750',
-          }
-          Object.entries(procedureDocTypeMap).forEach(([key, docType]) => {
-            const stored = (filesToStore as Record<string, { name: string; type: string; base64: string } | undefined>)[key]
-            if (stored) {
-              filesToUpload.push({
-                file: base64ToFile(stored.base64, stored.name, stored.type),
-                documentType: docType,
-              })
-            }
-          })
-          
-          // Create order
-          const result = await createOrder(orderData)
-          
-          if (!result.success || !result.order) {
-            throw new Error(result.error || 'Erreur lors de la création de la commande')
-          }
-          
-          // Upload documents
-          if (filesToUpload.length > 0) {
-            await uploadDocuments(filesToUpload, result.order.id)
-      }
+      // Store order meta in localStorage
+      localStorage.setItem('pendingOrderData', JSON.stringify({ orderData, finalPrice }))
+      
+      // Store files in IndexedDB (handles large files, no base64 needed)
+      await saveFilesToIndexedDB(allFiles)
+      
+      router.push('/checkout-signup')
 
           // Store order references
       localStorage.setItem('currentOrderId', result.order.id)

@@ -6,6 +6,7 @@ import { CheckCircle, Flag, Percent, Truck, Star } from 'lucide-react'
 import Image from 'next/image'
 import { useSupabaseSession } from '@/hooks/useSupabaseSession'
 import { createOrder, uploadDocuments, createCheckoutAndRedirect } from '@/lib/services/orderService'
+import { saveFilesToIndexedDB } from '@/lib/utils/storage'
 
 export default function PlaqueImmatriculationPage() {
   const router = useRouter()
@@ -365,85 +366,37 @@ export default function PlaqueImmatriculationPage() {
         finalPrice: totalPrice,
       }
       
-      localStorage.setItem('pendingOrderData', JSON.stringify(formDataToStore))
-      
-      // Check if user is already logged in
+      localStorage.      // CASE 1: USER IS LOGGED IN
       if (user && !sessionLoading) {
-        // User is logged in - create order directly and redirect to payment
-        // Use File objects directly, no need for base64 conversion
-        try {
-          const filesToUpload: Array<{ file: File; documentType: string }> = []
-          if (carteGriseFile) {
-            filesToUpload.push({ 
-              file: carteGriseFile, 
-              documentType: 'carte_grise' 
-            })
-          }
-
-          const result = await createOrder(orderData)
-          
-          if (!result.success || !result.order) {
-            throw new Error(result.error || 'Erreur lors de la création de la commande')
-          }
-
-          if (filesToUpload.length > 0) {
-            await uploadDocuments(filesToUpload, result.order.id)
-          }
-          
-          localStorage.setItem('currentOrderId', result.order.id)
-          localStorage.setItem('currentOrderRef', result.order.reference)
-          localStorage.setItem('currentOrderPrice', String(orderData.price))
-          
-          localStorage.removeItem('pendingOrderData')
-          sessionStorage.removeItem('pendingOrderFiles')
-          
-          // Create checkout and redirect directly to SumUp widget
-          await createCheckoutAndRedirect(result.order.id, orderData.price)
-          return
-        } catch (error: any) {
-          console.error('Erreur création commande:', error)
-          alert('Erreur lors de la création de la commande: ' + (error.message || 'Une erreur est survenue'))
-          return
+        console.log('User logged in, uploading directly...')
+        const result = await createOrder(orderData)
+        
+        if (!result.success || !result.order) {
+          throw new Error(result.error || 'Erreur lors de la création de la commande')
         }
-      }
-      
-      // User is not logged in - need to store files temporarily
-      // Check total file size first (sessionStorage limit is ~5-10MB)
-      const MAX_STORAGE_SIZE = 4 * 1024 * 1024 // 4MB safe limit
-      if (carteGriseFile && carteGriseFile.size > MAX_STORAGE_SIZE) {
-        alert(`Le fichier est trop volumineux (${(carteGriseFile.size / 1024 / 1024).toFixed(2)} MB). Veuillez réduire la taille du fichier ou vous connecter pour continuer.`)
+
+        if (carteGriseFile) {
+          await uploadDocuments([{ file: carteGriseFile, documentType: 'carte_grise' }], result.order.id)
+        }
+        
+        localStorage.setItem('currentOrderId', result.order.id)
+        localStorage.setItem('currentOrderRef', result.order.reference)
+        localStorage.setItem('currentOrderPrice', String(orderData.price))
+        
+        await createCheckoutAndRedirect(result.order.id, orderData.price)
         return
       }
       
-      // Convert carte grise file to base64 and store in sessionStorage
-      const convertFileToBase64 = (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.readAsDataURL(file)
-          reader.onload = () => {
-            const base64 = (reader.result as string).split(',')[1]
-            resolve(base64)
-          }
-          reader.onerror = reject
-        })
+      // CASE 2: GUEST USER
+      console.log('Guest user, storing in IndexedDB...')
+      localStorage.setItem('pendingOrderData', JSON.stringify({ orderData, finalPrice: totalPrice }))
+      
+      if (carteGriseFile) {
+        await saveFilesToIndexedDB({ carteGriseFile })
       }
       
-      const filesToStore: { [key: string]: { name: string; type: string; base64: string } } = {}
-      
-      try {
-        if (carteGriseFile) {
-          const base64 = await convertFileToBase64(carteGriseFile)
-          filesToStore.carteGriseFile = { name: carteGriseFile.name, type: carteGriseFile.type, base64 }
-        }
-        
-        // Try to store in sessionStorage
-        sessionStorage.setItem('pendingOrderFiles', JSON.stringify(filesToStore))
-        window.location.href = '/checkout-signup'
-      } catch (storageError: any) {
-        if (storageError.name === 'QuotaExceededError' || storageError.message?.includes('quota')) {
-          alert('Le fichier est trop volumineux pour être stocké temporairement. Veuillez vous connecter ou réduire la taille du fichier.')
-        } else {
-          alert('Erreur lors du stockage du fichier: ' + (storageError.message || 'Une erreur est survenue'))
+      router.push('/checkout-signup')
+or.message || 'Une erreur est survenue'))
         }
         return
       }

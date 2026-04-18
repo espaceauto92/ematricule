@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { createOrder, uploadDocuments, createCheckoutAndRedirect } from '@/lib/services/orderService'
+import { getFilesFromIndexedDB, clearIndexedDB } from '@/lib/utils/storage'
 import { CheckCircle, Lock, User, Mail, Phone, MapPin, CreditCard } from 'lucide-react'
 
 export default function CheckoutSignupPage() {
@@ -40,70 +41,55 @@ export default function CheckoutSignupPage() {
     })
     setOrderData(data.orderData)
 
-    // Récupérer les fichiers depuis sessionStorage (base64)
-    const storedFiles = sessionStorage.getItem('pendingOrderFiles')
-    if (storedFiles) {
+    const loadFiles = async () => {
+      // 1. D'abord tenter de récupérer depuis IndexedDB (notre nouvelle méthode pour les gros fichiers)
       try {
-        const filesData = JSON.parse(storedFiles)
-        console.log('Fichiers récupérés depuis sessionStorage:', Object.keys(filesData))
-        console.log('Données brutes:', filesData)
-        
-        // Convertir base64 en File objects
-        const fileObjects: { [key: string]: File } = {}
-        for (const [key, fileData] of Object.entries(filesData)) {
-          if (fileData && typeof fileData === 'object' && 'base64' in fileData) {
-            try {
-              const fileInfo = fileData as any
-              
-              // Vérifier que base64 est présent et valide
-              if (!fileInfo.base64 || typeof fileInfo.base64 !== 'string') {
-                console.error(`Fichier ${key}: base64 manquant ou invalide`)
-                continue
-              }
-              
-              // Décoder base64
-              const byteCharacters = atob(fileInfo.base64)
-              if (byteCharacters.length === 0) {
-                console.error(`Fichier ${key}: base64 décodé est vide`)
-                continue
-              }
-              
-              const byteNumbers = new Array(byteCharacters.length)
-              for (let i = 0; i < byteCharacters.length; i++) {
-                byteNumbers[i] = byteCharacters.charCodeAt(i)
-              }
-              const byteArray = new Uint8Array(byteNumbers)
-              const blob = new Blob([byteArray], { type: fileInfo.type || 'application/octet-stream' })
-              
-              if (blob.size === 0) {
-                console.error(`Fichier ${key}: Blob créé est vide`)
-                continue
-              }
-              
-              const fileName = fileInfo.name || `${key}_${Date.now()}`
-              fileObjects[key] = new File([blob], fileName, { type: fileInfo.type || 'application/octet-stream' })
-              
-              console.log(`✓ Fichier converti: ${key} - ${fileName} (${blob.size} bytes, type: ${fileInfo.type})`)
-            } catch (convertError) {
-              console.error(`✗ Erreur conversion fichier ${key}:`, convertError)
-            }
-          } else {
-            console.warn(`Fichier ${key}: format invalide`, fileData)
-          }
+        const idbFiles = await getFilesFromIndexedDB()
+        if (Object.keys(idbFiles).length > 0) {
+          console.log('Fichiers récupérés depuis IndexedDB:', Object.keys(idbFiles))
+          setFiles(idbFiles)
+          return // Si on a trouvé dans IDB, on s'arrête là
         }
-        
-        setFiles(fileObjects)
-        console.log(`Total fichiers convertis avec succès: ${Object.keys(fileObjects).length}/${Object.keys(filesData).length}`)
-        
-        if (Object.keys(fileObjects).length === 0) {
-          console.error('AUCUN fichier n\'a pu être converti!')
-        }
-      } catch (error) {
-        console.error('Erreur récupération fichiers:', error)
+      } catch (err) {
+        console.error('Erreur lecture IndexedDB:', err)
       }
-    } else {
-      console.warn('Aucun fichier trouvé dans sessionStorage - clé: pendingOrderFiles')
+
+      // 2. Repli sur sessionStorage (base64) pour les anciennes sessions
+      const storedFiles = sessionStorage.getItem('pendingOrderFiles')
+      if (storedFiles) {
+        try {
+          const filesData = JSON.parse(storedFiles)
+          console.log('Fichiers récupérés depuis sessionStorage:', Object.keys(filesData))
+          
+          const fileObjects: { [key: string]: File } = {}
+          for (const [key, fileData] of Object.entries(filesData)) {
+            if (fileData && typeof fileData === 'object' && 'base64' in fileData) {
+              try {
+                const fileInfo = fileData as any
+                const byteCharacters = atob(fileInfo.base64)
+                const byteNumbers = new Array(byteCharacters.length)
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i)
+                }
+                const byteArray = new Uint8Array(byteNumbers)
+                const blob = new Blob([byteArray], { type: fileInfo.type || 'application/octet-stream' })
+                const fileName = fileInfo.name || `${key}_${Date.now()}`
+                fileObjects[key] = new File([blob], fileName, { type: fileInfo.type || 'application/octet-stream' })
+              } catch (convertError) {
+                console.error(`Erreur conversion fichier ${key}:`, convertError)
+              }
+            }
+          }
+          setFiles(fileObjects)
+        } catch (error) {
+          console.error('Erreur récupération fichiers sessionStorage:', error)
+        }
+      } else {
+        console.warn('Aucun fichier trouvé')
+      }
     }
+
+    loadFiles()
   }, [router])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -369,6 +355,7 @@ export default function CheckoutSignupPage() {
       // Nettoyer les données temporaires
       localStorage.removeItem('pendingOrderData')
       sessionStorage.removeItem('pendingOrderFiles')
+      await clearIndexedDB()
 
       // Stocker les références de commande
       localStorage.setItem('currentOrderId', result.order.id)

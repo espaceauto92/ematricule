@@ -1,7 +1,7 @@
-/**
  * Service pour la gestion des commandes
  * Centralise les appels API pour créer, récupérer et gérer les commandes
  */
+import { createClient } from '@/lib/supabase/client'
 
 export interface OrderData {
   type: 'carte-grise' | 'plaque' | 'coc'
@@ -352,6 +352,64 @@ export async function uploadDocument(
     }
 
     console.log(`Upload document: ${documentType}, taille: ${file.size} bytes, nom: ${file.name}`)
+
+    // Pour les fichiers de plus de 4Mo ou si l'utilisateur est connecté, 
+    // on tente l'upload direct via Supabase pour bypasser la limite Vercel de 4.5Mo
+    if (file.size > 4 * 1024 * 1024) {
+      console.log('Fichier volumineux détecté, utilisation de l\'upload direct Supabase')
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        
+        if (user) {
+          const fileExt = file.name.split('.').pop() || 'pdf'
+          const timestamp = Date.now()
+          const fileName = `${user.id}/${orderId}/${documentType || 'document'}_${timestamp}.${fileExt}`
+          
+          // 1. Upload au Storage
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(fileName, file, {
+              contentType: file.type,
+              upsert: false
+            })
+
+          if (uploadError) throw uploadError
+
+          // 2. Récupérer l'URL publique
+          const { data: { publicUrl } } = supabase.storage
+            .from('documents')
+            .getPublicUrl(fileName)
+
+          // 3. Insérer la référence en base (via API pour rester sécurisé et bypasser l'admin client si besoin)
+          // On utilise quand même l'API pour la partie base de données car elle gère les checks de permission admin
+          // Mais on passe l'URL déjà uploadée
+          const response = await fetch('/api/documents/upload-ref', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId,
+              documentType,
+              fileUrl: publicUrl,
+              fileName: file.name,
+              fileType: file.type,
+              fileSize: file.size
+            })
+          })
+
+          if (!response.ok) {
+            const result = await response.json()
+            throw new Error(result.error || 'Erreur lors de la sauvegarde de la référence')
+          }
+
+          const result = await response.json()
+          return { success: true, document: result.document }
+        }
+      } catch (directError: any) {
+        console.error('Échec upload direct, repli sur API standard:', directError)
+        // On continue vers l'API standard si l'upload direct échoue
+      }
+    }
 
     const formData = new FormData()
     formData.append('file', file)

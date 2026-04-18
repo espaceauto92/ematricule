@@ -7,6 +7,7 @@ import { Star, Info } from 'lucide-react'
 import Link from 'next/link'
 import { useSupabaseSession } from '@/hooks/useSupabaseSession'
 import { createOrder, uploadDocuments, createCheckoutAndRedirect } from '@/lib/services/orderService'
+import { saveFilesToIndexedDB } from '@/lib/utils/storage'
 
 // Product data - matching the listing page
 const allProducts = [
@@ -441,48 +442,28 @@ export default function ProductDetailPage() {
       localStorage.setItem('pendingOrderData', JSON.stringify(formDataToStore))
       
       // Check if user is already logged in
+      // CASE 1: USER IS LOGGED IN
       if (user && !sessionLoading) {
-        // User is logged in - create order directly and redirect to payment
-        // Use File objects directly, no need for base64 conversion
+        console.log('User logged in, uploading directly...')
         try {
-          const filesToUpload: Array<{ file: File; documentType: string }> = []
-          if (carteGriseFile) {
-            filesToUpload.push({ 
-              file: carteGriseFile, 
-              documentType: 'carte_grise' 
-            })
-          }
-          if (rectoFile) {
-            filesToUpload.push({ 
-              file: rectoFile, 
-              documentType: 'carte_identite_recto' 
-            })
-          }
-          if (versoFile) {
-            filesToUpload.push({ 
-              file: versoFile, 
-              documentType: 'carte_identite_verso' 
-            })
-          }
-          
           const result = await createOrder(orderData)
-          
           if (!result.success || !result.order) {
             throw new Error(result.error || 'Erreur lors de la création de la commande')
           }
+
+          const filesToUpload: Array<{ file: File; documentType: string }> = []
+          if (carteGriseFile) filesToUpload.push({ file: carteGriseFile, documentType: 'carte_grise' })
+          if (rectoFile) filesToUpload.push({ file: rectoFile, documentType: 'carte_identite_recto' })
+          if (versoFile) filesToUpload.push({ file: versoFile, documentType: 'carte_identite_verso' })
           
           if (filesToUpload.length > 0) {
             await uploadDocuments(filesToUpload, result.order.id)
           }
-          
+
           localStorage.setItem('currentOrderId', result.order.id)
           localStorage.setItem('currentOrderRef', result.order.reference)
           localStorage.setItem('currentOrderPrice', String(orderData.price))
           
-          localStorage.removeItem('pendingOrderData')
-          sessionStorage.removeItem('pendingOrderFiles')
-          
-          // Create checkout and redirect directly to SumUp widget
           await createCheckoutAndRedirect(result.order.id, orderData.price)
           return
         } catch (error: any) {
@@ -492,61 +473,17 @@ export default function ProductDetailPage() {
         }
       }
       
-      // User is not logged in - need to store files temporarily
-      // Check total file size first (sessionStorage limit is ~5-10MB)
-      const MAX_STORAGE_SIZE = 4 * 1024 * 1024 // 4MB safe limit
-      let totalSize = 0
-      const filesToCheck = [carteGriseFile, rectoFile, versoFile].filter(Boolean) as File[]
+      // CASE 2: GUEST USER
+      console.log('Guest user, storing in IndexedDB...')
+      localStorage.setItem('pendingOrderData', JSON.stringify({ orderData, finalPrice: price }))
       
-      for (const file of filesToCheck) {
-        totalSize += file.size
-      }
+      const filesToStore: Record<string, File> = {}
+      if (carteGriseFile) filesToStore.carteGriseFile = carteGriseFile
+      if (rectoFile) filesToStore.rectoFile = rectoFile
+      if (versoFile) filesToStore.versoFile = versoFile
       
-      if (totalSize > MAX_STORAGE_SIZE) {
-        alert(`Les fichiers sont trop volumineux (${(totalSize / 1024 / 1024).toFixed(2)} MB). Veuillez réduire la taille des fichiers ou vous connecter pour continuer.`)
-        return
-      }
-      
-      // Convert files to base64 and store in sessionStorage
-      const convertFileToBase64 = (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.readAsDataURL(file)
-          reader.onload = () => {
-            const base64 = (reader.result as string).split(',')[1]
-            resolve(base64)
-          }
-          reader.onerror = reject
-        })
-      }
-      
-      const filesToStore: { [key: string]: { name: string; type: string; base64: string } } = {}
-      
-      try {
-        if (carteGriseFile) {
-          const base64 = await convertFileToBase64(carteGriseFile)
-          filesToStore.carteGriseFile = { name: carteGriseFile.name, type: carteGriseFile.type, base64 }
-        }
-        if (rectoFile) {
-          const base64 = await convertFileToBase64(rectoFile)
-          filesToStore.rectoFile = { name: rectoFile.name, type: rectoFile.type, base64 }
-        }
-        if (versoFile) {
-          const base64 = await convertFileToBase64(versoFile)
-          filesToStore.versoFile = { name: versoFile.name, type: versoFile.type, base64 }
-        }
-        
-        // Try to store in sessionStorage
-        sessionStorage.setItem('pendingOrderFiles', JSON.stringify(filesToStore))
-        window.location.href = '/checkout-signup'
-      } catch (storageError: any) {
-        if (storageError.name === 'QuotaExceededError' || storageError.message?.includes('quota')) {
-          alert('Les fichiers sont trop volumineux pour être stockés temporairement. Veuillez vous connecter ou réduire la taille des fichiers.')
-        } else {
-          alert('Erreur lors du stockage des fichiers: ' + (storageError.message || 'Une erreur est survenue'))
-        }
-        return
-      }
+      await saveFilesToIndexedDB(filesToStore)
+      router.push('/checkout-signup')
 
     } catch (error: any) {
       console.error('Erreur soumission:', error)
