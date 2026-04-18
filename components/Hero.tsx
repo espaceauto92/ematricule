@@ -193,7 +193,7 @@ const Hero = () => {
                 <img
                   key={index}
                   src={image}
-                  alt={`Hero image ${index + 1}`}
+                  alt={index === 0 ? "Service de carte grise en ligne rapide et sécurisé" : "Plaques d'immatriculation homologuées en plexiglass"}
                   className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${
                     index === currentImageIndex 
                       ? 'opacity-100 z-10' 
@@ -201,6 +201,7 @@ const Hero = () => {
                   }`}
                 />
               ))}
+
             </div>
           </div>
         </div>
