@@ -1452,7 +1452,7 @@ export default function CarteGrisePage() {
                   </div>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
+                <form onSubmit={handleSubmit} noValidate className="space-y-6">
                   {/* Vehicle Information - Mobile */}
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Informations du véhicule</h3>
@@ -1762,7 +1762,7 @@ export default function CarteGrisePage() {
                   Documents requis
                 </h2>
 
-                <form id="carte-grise-mobile-form" onSubmit={handleSubmit} className="space-y-6">
+                <form id="carte-grise-mobile-form" onSubmit={handleSubmit} noValidate className="space-y-6">
                   {/* Client Type Selection for Changement de Titulaire - Mobile */}
                   {documentType === 'changement-titulaire' && (
                     <div className="mb-6">
@@ -3260,7 +3260,7 @@ export default function CarteGrisePage() {
                   Informations de commande
               </h2>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
+                <form onSubmit={handleSubmit} noValidate className="space-y-6">
                   {/* Document Type Display */}
                   {selectedDocument && (
                     <div className="bg-gradient-to-br from-primary-50 to-primary-100/50 border-2 border-primary-200 rounded-2xl p-5 md:p-6 mb-6 shadow-sm">
