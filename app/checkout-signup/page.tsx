@@ -177,10 +177,10 @@ export default function CheckoutSignupPage() {
         throw new Error('Impossible d\'établir la session. Veuillez réessayer.')
       }
 
-      // Court délai pour que les cookies et le profil soient pris en compte, puis on enchaîne direct sur la commande et le paiement
-      await new Promise(resolve => setTimeout(resolve, 400))
+      // Court délai pour que les cookies et le profil soient pris en compte
+      await new Promise(resolve => setTimeout(resolve, 500))
 
-      // Créer la commande puis redirection directe vers le paiement
+      // Créer la commande
       console.log('Création de la commande avec orderData:', {
         type: orderData.type,
         price: orderData.price,
@@ -191,75 +191,76 @@ export default function CheckoutSignupPage() {
 
       if (!result.success || !result.order) {
         console.error('Erreur création commande:', result.error)
-        console.error('Order data sent:', {
-          type: orderData.type,
-          price: orderData.price,
-          hasVehicleData: !!orderData.vehicleData,
-          hasMetadata: !!orderData.metadata
-        })
-        
-        // Show more detailed error to user
         let errorMessage = result.error || 'Erreur lors de la création de la commande'
         if (result.error?.includes('foreign key') || result.error?.includes('user_id')) {
           errorMessage = 'Erreur de profil utilisateur. Veuillez rafraîchir la page et réessayer.'
         } else if (result.error?.includes('constraint') || result.error?.includes('violation')) {
           errorMessage = 'Erreur de validation des données. Veuillez vérifier vos informations.'
         }
-        
         throw new Error(errorMessage)
       }
       
       console.log('Commande créée avec succès:', result.order.id)
 
+      // --- LOAD FILES FRESH FROM IndexedDB at submit time ---
+      let freshFiles: Record<string, File> = {}
+      try {
+        freshFiles = await getFilesFromIndexedDB()
+        console.log('Fichiers récupérés depuis IndexedDB (submit):', Object.keys(freshFiles))
+      } catch (err) {
+        console.error('Erreur lecture IndexedDB lors de la soumission:', err)
+      }
+      // Fallback to state files if IndexedDB was empty
+      if (Object.keys(freshFiles).length === 0 && Object.keys(files).length > 0) {
+        freshFiles = files
+        console.log('Utilisation des fichiers depuis l\'état React:', Object.keys(freshFiles))
+      }
+
       // Uploader les documents
       const documentsToUpload: Array<{ file: File; documentType: string }> = []
       
-      console.log('Fichiers disponibles pour upload:', Object.keys(files))
+      console.log('Fichiers disponibles pour upload:', Object.keys(freshFiles))
       
-      // Documents pour carte-grise
-      if (files.idFile) {
-        console.log('Ajout carte_identite:', files.idFile.name)
-        documentsToUpload.push({ file: files.idFile, documentType: 'carte_identite' })
-      }
-      if (files.proofAddressFile) {
-        console.log('Ajout justificatif_domicile:', files.proofAddressFile.name)
-        documentsToUpload.push({ file: files.proofAddressFile, documentType: 'justificatif_domicile' })
-      }
-      if (files.currentCardFile) {
-        console.log('Ajout carte_grise_actuelle:', files.currentCardFile.name)
-        documentsToUpload.push({ file: files.currentCardFile, documentType: 'carte_grise_actuelle' })
-      }
-      if (files.certificatCessionFile) {
-        console.log('Ajout certificat_cession:', files.certificatCessionFile.name)
-        documentsToUpload.push({ file: files.certificatCessionFile, documentType: 'certificat_cession' })
-      }
-      if (files.permisConduireFile) {
-        console.log('Ajout permis_conduire:', files.permisConduireFile.name)
-        documentsToUpload.push({ file: files.permisConduireFile, documentType: 'permis_conduire' })
-      }
-      if (files.controleTechniqueFile) {
-        console.log('Ajout controle_technique:', files.controleTechniqueFile.name)
-        documentsToUpload.push({ file: files.controleTechniqueFile, documentType: 'controle_technique' })
-      }
-      if (files.assuranceFile) {
-        console.log('Ajout assurance:', files.assuranceFile.name)
-        documentsToUpload.push({ file: files.assuranceFile, documentType: 'assurance' })
-      }
-      if (files.mandatFile) {
-        const mandatType = orderData.metadata?.isSignatureValidated ? 'mandat_signe' : 'mandat'
-        console.log('Ajout mandat:', files.mandatFile.name, `(${mandatType})`)
-        documentsToUpload.push({ file: files.mandatFile, documentType: mandatType })
+      // Documents de base
+      const baseDocMap: Record<string, string> = {
+        idFile: 'carte_identite',
+        proofAddressFile: 'justificatif_domicile',
+        currentCardFile: 'carte_grise_actuelle',
+        certificatCessionFile: 'certificat_cession',
+        permisConduireFile: 'permis_conduire',
+        controleTechniqueFile: 'controle_technique',
+        assuranceFile: 'assurance',
+        carteGriseFile: 'carte_grise',
+        rectoFile: 'carte_grise_recto',
+        versoFile: 'carte_grise_verso',
       }
 
-      // Carte grise procedure-specific documents (all types, so admin receives everything)
+      for (const [key, docType] of Object.entries(baseDocMap)) {
+        const file = freshFiles[key]
+        if (file) {
+          console.log(`Ajout ${docType}:`, file.name)
+          documentsToUpload.push({ file, documentType: docType })
+        }
+      }
+
+      // Mandat signé
+      if (freshFiles.mandatFile) {
+        const mandatType = orderData.metadata?.isSignatureValidated ? 'mandat_signe' : 'mandat'
+        console.log('Ajout mandat:', freshFiles.mandatFile.name, `(${mandatType})`)
+        documentsToUpload.push({ file: freshFiles.mandatFile, documentType: mandatType })
+      }
+
+      // Documents spécifiques aux procédures carte-grise
       const procedureDocTypeMap: Record<string, string> = {
         hostIdFile: 'host_id',
         hostProofAddressFile: 'host_justificatif_domicile',
         attestationHebergementFile: 'attestation_hebergement',
         kbisFile: 'kbis',
         gerantIdFile: 'gerant_id',
+        companyAssuranceFile: 'company_assurance',
         cerfa13750File: 'cerfa_13750',
         cerfa13753File: 'cerfa_13753',
+        mandatFile: 'mandat',
         carteGriseVendeurFile: 'carte_grise_vendeur',
         demandeCertificatMandatFile: 'demande_certificat_mandat',
         certificatCessionCerfa15776File: 'certificat_cession_15776',
@@ -270,8 +271,10 @@ export default function CheckoutSignupPage() {
         ficheJustificatifIdentiteFile: 'fiche_justificatif_identite',
         fichePermisConduireFile: 'fiche_permis_conduire',
         ficheCopieCarteGriseFile: 'fiche_copie_carte_grise',
+        ficheMandatCerfa13757File: 'fiche_mandat_13757',
         wwCarteGriseEtrangereFile: 'ww_carte_grise_etrangere',
         wwCertificatConformiteFile: 'ww_certificat_conformite',
+        wwDemandeCertificatMandatFile: 'ww_demande_certificat_mandat',
         wwJustificatifProprieteFile: 'ww_justificatif_propriete',
         wwQuitusFiscalFile: 'ww_quitus_fiscal',
         wwPermisConduireFile: 'ww_permis_conduire',
@@ -280,6 +283,7 @@ export default function CheckoutSignupPage() {
         wwControleTechniqueFile: 'ww_controle_technique',
         ueCarteGriseEtrangereFile: 'ue_carte_grise_etrangere',
         ueCertificatConformiteFile: 'ue_certificat_conformite',
+        ueDemandeCertificatMandatFile: 'ue_demande_certificat_mandat',
         ueJustificatifProprieteFile: 'ue_justificatif_propriete',
         ueQuitusFiscalFile: 'ue_quitus_fiscal',
         uePermisConduireFile: 'ue_permis_conduire',
@@ -292,9 +296,13 @@ export default function CheckoutSignupPage() {
         wGarageCniGerantFile: 'w_garage_cni_gerant',
         wGarageAssuranceFile: 'w_garage_assurance',
         wGaragePreuveActiviteFile: 'w_garage_preuve_activite',
+        wGarageAttestationFiscaleFile: 'w_garage_attestation_fiscale',
+        wGarageAttestationUrssafFile: 'w_garage_attestation_urssaf',
+        wGarageMandatFile: 'w_garage_mandat',
         cessionCarteGriseBarreeFile: 'cession_carte_grise_barree',
         cessionCarteIdentiteFile: 'cession_carte_identite',
         cessionCertificatVenteFile: 'cession_certificat_vente',
+        cessionMandatFile: 'cession_mandat',
         quitusJustificatifIdentiteFile: 'quitus_justificatif_identite',
         quitusJustificatifDomicileFile: 'quitus_justificatif_domicile',
         quitusCertificatImmatriculationEtrangerFile: 'quitus_certificat_immatriculation_etranger',
@@ -306,28 +314,13 @@ export default function CheckoutSignupPage() {
         quitusCopieIdentiteMandataireFile: 'quitus_copie_identite_mandataire',
         quitusDemandeCertificatCerfa13750File: 'quitus_demande_cerfa_13750',
       }
-      if (orderData.type === 'carte-grise') {
-        Object.entries(procedureDocTypeMap).forEach(([key, docType]) => {
-          const file = (files as Record<string, File | undefined>)[key]
-          if (file) {
-            documentsToUpload.push({ file, documentType: docType })
-          }
-        })
-      }
-      
-      // Documents pour plaque et COC
-      if (files.carteGriseFile) {
-        console.log('Ajout carte_grise:', files.carteGriseFile.name)
-        documentsToUpload.push({ file: files.carteGriseFile, documentType: 'carte_grise' })
-      }
-      if (files.rectoFile) {
-        console.log('Ajout carte_grise_recto:', files.rectoFile.name)
-        documentsToUpload.push({ file: files.rectoFile, documentType: 'carte_grise_recto' })
-      }
-      if (files.versoFile) {
-        console.log('Ajout carte_grise_verso:', files.versoFile.name)
-        documentsToUpload.push({ file: files.versoFile, documentType: 'carte_grise_verso' })
-      }
+
+      Object.entries(procedureDocTypeMap).forEach(([key, docType]) => {
+        const file = (freshFiles as Record<string, File | undefined>)[key]
+        if (file && !documentsToUpload.find(d => d.documentType === docType)) {
+          documentsToUpload.push({ file, documentType: docType })
+        }
+      })
       
       console.log(`Total documents à uploader: ${documentsToUpload.length}`)
 
@@ -337,19 +330,13 @@ export default function CheckoutSignupPage() {
         console.log(`Résultat upload: ${uploadResult.uploaded}/${documentsToUpload.length} uploadés`)
         
         if (!uploadResult.success) {
-          console.error('Erreurs lors de l\'upload des documents:', uploadResult.errors)
-          // Afficher les erreurs mais continuer
-          if (uploadResult.errors.length > 0) {
-            console.error('Détails des erreurs:', uploadResult.errors)
-          }
-        }
-        
-        if (uploadResult.uploaded === 0) {
-          console.error('AUCUN document n\'a été uploadé avec succès!')
-          throw new Error('Échec de l\'upload des documents. Veuillez réessayer.')
+          console.error('Certains documents n\'ont pas pu être uploadés:', uploadResult.errors)
+          // Ne pas bloquer le paiement — l'admin peut toujours demander les documents manuellement
         }
       } else {
-        console.warn('Aucun document à uploader - vérifiez que les fichiers sont bien récupérés depuis sessionStorage')
+        // No files found — log a warning but continue to payment
+        // Admin will receive order data and can request documents manually
+        console.warn('Aucun document trouvé à uploader. La commande sera créée sans documents.')
       }
 
       // Nettoyer les données temporaires
@@ -362,9 +349,30 @@ export default function CheckoutSignupPage() {
       localStorage.setItem('currentOrderRef', result.order.reference)
       localStorage.setItem('currentOrderPrice', String(orderData.price))
 
-      // Redirection directe vers le paiement (popup SumUp) — pas de passage par le dashboard
+      // Redirection vers le paiement
       setRedirectingToPayment(true)
-      await createCheckoutAndRedirect(result.order.id, orderData.price)
+
+      // Lancer le paiement — createCheckoutAndRedirect ouvre un popup ou redirige
+      // On redirige vers le dashboard après (le popup gérera la suite)
+      try {
+        await createCheckoutAndRedirect(result.order.id, orderData.price)
+      } catch (checkoutError: any) {
+        console.error('Erreur lors de la création du checkout:', checkoutError)
+        // En cas d'erreur de paiement, rediriger vers le dashboard
+        // La commande a bien été créée, l'admin la verra
+        setError('Commande créée. Erreur lors de l\'ouverture du paiement. Veuillez contacter le support ou réessayer depuis votre espace client.')
+        setRedirectingToPayment(false)
+        // Redirect to dashboard anyway so user can see their order
+        setTimeout(() => {
+          router.push('/dashboard')
+        }, 3000)
+        return
+      }
+
+      // Redirect to dashboard after payment is initiated
+      // (popup handles SumUp, this page stays as dashboard)
+      router.push('/dashboard')
+
     } catch (error: any) {
       console.error('Erreur:', error)
       setRedirectingToPayment(false)
@@ -373,6 +381,7 @@ export default function CheckoutSignupPage() {
       setIsLoading(false)
     }
   }
+
 
   if (!userData || !orderData) {
     return (
