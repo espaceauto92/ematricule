@@ -1,10 +1,18 @@
 /**
- * Utility for storing larger files in IndexedDB (guest mode persistence)
+ * Utility for storing files in IndexedDB (guest mode persistence)
+ * Stores raw ArrayBuffer + metadata so files survive page navigation
  */
 
 const DB_NAME = 'emattricule_temp_store'
 const STORE_NAME = 'pending_files'
-const DB_VERSION = 1
+const DB_VERSION = 2 // bumped to force schema upgrade
+
+interface StoredFile {
+  buffer: ArrayBuffer
+  name: string
+  type: string
+  size: number
+}
 
 /**
  * Initialize/Open the database
@@ -18,16 +26,18 @@ function openDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event: any) => {
       const db = event.target.result
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME)
+      // Drop old store if it exists (schema upgrade)
+      if (db.objectStoreNames.contains(STORE_NAME)) {
+        db.deleteObjectStore(STORE_NAME)
       }
+      db.createObjectStore(STORE_NAME)
     }
   })
 }
 
 /**
- * Save a dictionary of files to IndexedDB
- * @param filesMap Object where keys are document types and values are File objects
+ * Save a dictionary of files to IndexedDB.
+ * Converts each File to an ArrayBuffer so it survives page navigation.
  */
 export async function saveFilesToIndexedDB(filesMap: Record<string, File>): Promise<void> {
   try {
@@ -38,16 +48,31 @@ export async function saveFilesToIndexedDB(filesMap: Record<string, File>): Prom
     // Clear previous files first
     store.clear()
 
-    // Save each file
-    for (const [key, file] of Object.entries(filesMap)) {
-      if (file) {
-        store.put(file, key)
+    // Convert each File to a plain serializable object before storing
+    const entries = Object.entries(filesMap).filter(([, file]) => file instanceof File)
+
+    for (const [key, file] of entries) {
+      try {
+        const buffer = await file.arrayBuffer()
+        const storedFile: StoredFile = {
+          buffer,
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+        }
+        store.put(storedFile, key)
+      } catch (err) {
+        console.error(`Failed to serialize file "${key}":`, err)
       }
     }
 
     return new Promise((resolve, reject) => {
-      transaction.oncomplete = () => resolve()
+      transaction.oncomplete = () => {
+        console.log(`Saved ${entries.length} files to IndexedDB`)
+        resolve()
+      }
       transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(new Error('IndexedDB transaction aborted'))
     })
   } catch (error) {
     console.error('Error saving to IndexedDB:', error)
@@ -56,7 +81,8 @@ export async function saveFilesToIndexedDB(filesMap: Record<string, File>): Prom
 }
 
 /**
- * Retrieve all pending files from IndexedDB
+ * Retrieve all pending files from IndexedDB.
+ * Reconstructs File objects from stored ArrayBuffers.
  */
 export async function getFilesFromIndexedDB(): Promise<Record<string, File>> {
   try {
@@ -71,9 +97,21 @@ export async function getFilesFromIndexedDB(): Promise<Record<string, File>> {
       request.onsuccess = (event: any) => {
         const cursor = event.target.result
         if (cursor) {
-          files[cursor.key] = cursor.value
+          const key = cursor.key as string
+          const value = cursor.value
+
+          // Handle both old (File object) and new (StoredFile) formats
+          if (value instanceof File) {
+            files[key] = value
+          } else if (value && value.buffer instanceof ArrayBuffer) {
+            const storedFile = value as StoredFile
+            const blob = new Blob([storedFile.buffer], { type: storedFile.type })
+            files[key] = new File([blob], storedFile.name, { type: storedFile.type })
+          }
+
           cursor.continue()
         } else {
+          console.log(`Retrieved ${Object.keys(files).length} files from IndexedDB:`, Object.keys(files))
           resolve(files)
         }
       }
@@ -94,7 +132,7 @@ export async function clearIndexedDB(): Promise<void> {
     const transaction = db.transaction(STORE_NAME, 'readwrite')
     const store = transaction.objectStore(STORE_NAME)
     store.clear()
-    
+
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
